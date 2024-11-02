@@ -69,10 +69,15 @@ Robo *robos;  // Array contendo todos os robôs da simulação
 int num_robos;  // Número total de robôs
 int num_total_turnos;  // Número total de turnos da simulação
 int energia_bateria;  // Quantidade de energia fornecida por uma bateria
+int robos_planejando;
+sem_t sem_robos_planejando;
+sem_t sem_executa;
 
 /* Declaração das funções auxiliares */
 void le_entrada();
 void imprime_estado();
+void *thread_routine(void* arg);
+//void fim_de_turno();
 void processa_robo(Robo *robo);
 void calcula_roubo_energia(Robo *robot);
 void calcula_movimento(Robo *robo);
@@ -88,21 +93,32 @@ void destroi_robos(Robo *robos, int num_robos);
 
 int main()
 {
+    sem_init(&sem_robos_planejando, 0, 1);
+    sem_init(&sem_executa, 0, 0);
+
     /* Leitura da entrada e inicialização da arena e dos robôs */
     le_entrada();
+    
 
     /* Simulação dos turnos. O turno 0 é o estado inicial. */
     for (int turno = 0; turno < num_total_turnos; turno++)
     {
+        pthread_t *threads = (pthread_t *)malloc(sizeof(pthread_t)*num_robos);
+
         printf("Turno %d:\n", turno);
         imprime_estado();
 //        imprime_resultados();
-
+        
         /* Processa cada robô */
         for (int r = 0; r < num_robos; r++)
         {
-            processa_robo(&robos[r]);
+            pthread_create(&threads[r], NULL, thread_routine, &robos[r]);
         }
+        for (int r = 0; r < num_robos; r++)
+        {
+            pthread_join(threads[r], NULL);
+        }
+        free(threads);
     }
 
     /* Imprime os resultados da simulação */
@@ -197,10 +213,21 @@ void imprime_estado()
     fflush(stdout);
 }
 
+void* thread_routine(void* arg) {
+    Robo *robo = (Robo *)arg;
+    processa_robo(robo);
+    pthread_exit(NULL);
+}
+
+// void fim_de_turno() {
+//     sem_
+// }
+
 /* Função que controla o processamento de cada robô */
 void processa_robo(Robo *robo)
 {
     // Etapa de planejamento
+
     if (robo->energia == 0)
     {
         // Robô sem energia tenta roubar energia de um vizinho
@@ -210,6 +237,17 @@ void processa_robo(Robo *robo)
         // Robô com energia planeja o próximo movimento
         calcula_movimento(robo);
     }
+
+    sem_wait(&sem_robos_planejando);
+    robos_planejando++;
+    sem_post(&sem_robos_planejando);
+    if (robos_planejando == num_robos) {
+        for (int i = 0; i < num_robos; i++) {
+            sem_post(&sem_executa);
+        }
+        robos_planejando = 0;
+    }
+    sem_wait(&sem_executa);
 
     // Etapa de execução
     if (robo->energia > 0)
