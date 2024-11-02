@@ -1,0 +1,12 @@
+5 5 2 10 6
+.....
+..b..
+.x.x.
+..f..
+.....
+0 0
+0 4
+5 LSLSS
+5 OSOSS
+
+Esta entrada demonstra uma condicao de conflito de movimentacao na qual o robo com menor ID possui prioridade para realizar o movimento.

@@ -1,0 +1,14 @@
+5 5 3 2 4
+.....
+b...b
+b...b
+.....
+.....
+0 0
+0 4
+0 2
+3 SSL
+3 SSO
+3 SSS
+
+Exemplo de roubo de energia pelo robô 2.
