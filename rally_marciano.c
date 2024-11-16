@@ -73,8 +73,12 @@ int energia_bateria;  // Quantidade de energia fornecida por uma bateria
 sem_t sem_robos;
 sem_t sem_robos_esperando;
 sem_t sem_turno;
+
 pthread_mutex_t mutex;
 int robos_que_jogaram;
+
+sem_t sem_controla_robos_zerados;
+int robos_zerados = 0;
 
 /* Declaração das funções auxiliares */
 void le_entrada();
@@ -99,6 +103,7 @@ int main()
     sem_init(&sem_turno, 0, 1);
     sem_init(&sem_robos, 0, 0);
     sem_init(&sem_robos_esperando, 0, 0);
+    sem_init(&sem_controla_robos_zerados, 0, 0);
     pthread_mutex_init(&mutex, NULL);
 
     /* Leitura da entrada e inicialização da arena e dos robôs */
@@ -143,6 +148,7 @@ int main()
     sem_destroy(&sem_turno);
     sem_destroy(&sem_robos);
     sem_destroy(&sem_robos_esperando);
+    sem_destroy(&sem_controla_robos_zerados);
     pthread_mutex_destroy(&mutex);
 
     return 0;
@@ -233,7 +239,20 @@ void* thread_routine(void* arg) {
     for (int turno = 0; turno < num_total_turnos; turno++)
     {
         sem_wait(&sem_robos);
+        if (!robo->energia) {
+            sem_wait(&sem_controla_robos_zerados);
+        }
         processa_robo(robo);
+        if (!robo->energia) {
+            pthread_mutex_lock(&mutex);
+            robos_zerados++;
+            pthread_mutex_unlock(&mutex);
+        }
+        if (robos_zerados && robos_que_jogaram == num_robos - robos_zerados) {
+            for (int r = 0; r < robos_zerados; r++) {
+                sem_post(&sem_controla_robos_zerados);
+            }
+        }
 
         pthread_mutex_lock(&mutex);
         robos_que_jogaram++;
