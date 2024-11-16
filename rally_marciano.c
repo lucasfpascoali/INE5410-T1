@@ -70,25 +70,28 @@ int num_robos;  // Número total de robôs
 int num_total_turnos;  // Número total de turnos da simulação
 int energia_bateria;  // Quantidade de energia fornecida por uma bateria
 
-sem_t sem_robos;
-sem_t sem_robos_esperando;
+sem_t sem_iniciar_turno_robos;
+sem_t sem_finalizar_turno_robos;
 sem_t sem_turno;
 
-pthread_mutex_t mutex;
-int robos_que_jogaram;
+pthread_mutex_t mutex_robos_processados;
+int robos_processados = 0;
 
-sem_t sem_controla_robos_zerados;
+sem_t sem_iniciar_execucao_robos;
+pthread_mutex_t mutex_robos_planejados;
+int robos_planejados = 0;
+
+sem_t sem_iniciar_calculo_robos_zerados;
+pthread_mutex_t mutex_robos_zerados;
 int robos_zerados = 0;
-
-sem_t sem_controla_planejamento_robos;
-int robos_que_planejaram = 0;
 
 /* Declaração das funções auxiliares */
 void le_entrada();
 void imprime_estado();
-void *thread_routine(void* arg);
-//void fim_de_turno();
+void *rotina_robo(void *arg);
 void processa_robo(Robo *robo);
+void sincroniza_planejamento_robos();
+void resolve_conflito_por_mesma_celula();
 void calcula_roubo_energia(Robo *robot);
 void calcula_movimento(Robo *robo);
 void realiza_movimento(Robo *robo);
@@ -103,41 +106,37 @@ void destroi_robos(Robo *robos, int num_robos);
 
 int main()
 {
+    /* Inicialização Semáforos e Mutexes */
+    sem_init(&sem_iniciar_turno_robos, 0, 0);
+    sem_init(&sem_finalizar_turno_robos, 0, 0);
     sem_init(&sem_turno, 0, 1);
-    sem_init(&sem_robos, 0, 0);
-    sem_init(&sem_robos_esperando, 0, 0);
-    sem_init(&sem_controla_robos_zerados, 0, 0);
-    sem_init(&sem_controla_planejamento_robos, 0, 0);
-    pthread_mutex_init(&mutex, NULL);
+    sem_init(&sem_iniciar_execucao_robos, 0, 0);
+    sem_init(&sem_iniciar_calculo_robos_zerados, 0, 0);
+    pthread_mutex_init(&mutex_robos_processados, NULL);
+    pthread_mutex_init(&mutex_robos_planejados, NULL);
+    pthread_mutex_init(&mutex_robos_zerados, NULL);
 
     /* Leitura da entrada e inicialização da arena e dos robôs */
     le_entrada();
-    
-    pthread_t *threads = (pthread_t *)malloc(sizeof(pthread_t)*num_robos);
-    /* Processa cada robô */
-    for (int r = 0; r < num_robos; r++)
-    {
-        pthread_create(&threads[r], NULL, thread_routine, &robos[r]);
+
+    pthread_t *threads = (pthread_t *)malloc(sizeof(pthread_t)*num_robos); 
+    for (int r = 0; r < num_robos; r++) {
+        pthread_create(&threads[r], NULL, rotina_robo, &robos[r]);
     }
 
+    /* Simulação dos turnos. O turno 0 é o estado inicial. */
     for (int turno = 0; turno < num_total_turnos; turno++)
-    {
+    {   
         sem_wait(&sem_turno);
-        robos_que_jogaram = 0;
-
         printf("Turno %d:\n", turno);
         imprime_estado();
-//        imprime_resultados();
-        for (int r = 0; r < num_robos; r++) {
-            sem_post(&sem_robos); // libera robos
-        }
+
+        for (int r = 0; r < num_robos; r++) sem_post(&sem_iniciar_turno_robos); // Libera robôs para iniciar turno.
     }
 
-    for (int r = 0; r < num_robos; r++)
-    {
+    for (int r = 0; r < num_robos; r++) {
         pthread_join(threads[r], NULL);
     }
-    free(threads);
 
     /* Imprime os resultados da simulação */
     printf("Turno %d:\n", num_total_turnos);
@@ -147,14 +146,17 @@ int main()
     /* Liberação de memória alocada */
     destroi_arena(&arena);
     destroi_robos(robos, num_robos);
+    free(threads);
 
-    /* Liberar memória de semáforos */
+    /* Liberação Semafóros e Mutex */
     sem_destroy(&sem_turno);
-    sem_destroy(&sem_robos);
-    sem_destroy(&sem_robos_esperando);
-    sem_destroy(&sem_controla_robos_zerados);
-    sem_destroy(&sem_controla_planejamento_robos);
-    pthread_mutex_destroy(&mutex);
+    sem_destroy(&sem_iniciar_turno_robos);
+    sem_destroy(&sem_finalizar_turno_robos);
+    sem_destroy(&sem_iniciar_execucao_robos);
+    sem_destroy(&sem_iniciar_calculo_robos_zerados);
+    pthread_mutex_destroy(&mutex_robos_processados);
+    pthread_mutex_destroy(&mutex_robos_planejados);
+    pthread_mutex_destroy(&mutex_robos_zerados);
 
     return 0;
 }
@@ -239,38 +241,30 @@ void imprime_estado()
     fflush(stdout);
 }
 
-void* thread_routine(void* arg) {
+void *rotina_robo(void *arg) {
     Robo *robo = (Robo *)arg;
-    for (int turno = 0; turno < num_total_turnos; turno++)
-    {
-        sem_wait(&sem_robos);
-        if (!robo->energia) {
-            sem_wait(&sem_controla_robos_zerados);
-        }
-        processa_robo(robo);
-        if (!robo->energia) {
-            pthread_mutex_lock(&mutex);
-            robos_zerados++;
-            pthread_mutex_unlock(&mutex);
-        }
-        if (robos_zerados && robos_que_jogaram == num_robos - robos_zerados) {
-            for (int r = 0; r < robos_zerados; r++) {
-                sem_post(&sem_controla_robos_zerados);
-            }
-        }
-
-        pthread_mutex_lock(&mutex);
-        robos_que_jogaram++;
-        pthread_mutex_unlock(&mutex);
-
-        if (robos_que_jogaram == num_robos) {
-            for (int r = 0; r < num_robos; r++) {
-                sem_post(&sem_robos_esperando);
-            }
-            sem_post(&sem_turno); 
-        }
-        sem_wait(&sem_robos_esperando);
+    for (int turno = 0; turno < num_total_turnos; turno++) {
+        sem_wait(&sem_iniciar_turno_robos);
         
+        processa_robo(robo);
+
+        pthread_mutex_lock(&mutex_robos_processados);
+        robos_processados++;
+        pthread_mutex_unlock(&mutex_robos_processados);
+
+        if (robos_processados == num_robos - robos_zerados) {
+            printf("Robô %d libera robos_zerados\n", robo->id);
+            fflush(stdout);
+            for (int r = 0; r < robos_zerados; r++) sem_post(&sem_iniciar_calculo_robos_zerados);
+        }
+
+        if (robos_processados == num_robos) {
+            robos_processados = 0;
+            for (int r = 0; r < num_robos; r++) sem_post(&sem_finalizar_turno_robos);
+            sem_post(&sem_turno);
+        }
+
+        sem_wait(&sem_finalizar_turno_robos);
     }
     pthread_exit(NULL);
 }
@@ -278,62 +272,48 @@ void* thread_routine(void* arg) {
 /* Função que controla o processamento de cada robô */
 void processa_robo(Robo *robo)
 {
-    // Etapa de planejamento
+    if (robo->energia == 0) {
+        sem_wait(&sem_iniciar_calculo_robos_zerados);
+        calcula_roubo_energia(robo); // Etapa de planejamento: Robô sem energia tenta roubar energia de um vizinho
+        realiza_roubo_energia(robo); // Etapa de execução: Robô sem energia tenta roubar energia
 
-    if (robo->energia == 0)
-    {
-        // Robô sem energia tenta roubar energia de um vizinho
-        calcula_roubo_energia(robo);
-    } else
-    {
-        // Robô com energia planeja o próximo movimento
-        calcula_movimento(robo);
+        
+    } else {
+        calcula_movimento(robo); // Etapa de planejamento: Robô com energia planeja o próximo movimento 
+        sincroniza_planejamento_robos(); // Sincroniza todos os robôs que planejaram movimento e resolve conflitos
+        realiza_movimento(robo); // Etapa de execução: Robô com energia realiza o movimento planejado
     }
+}
 
-    pthread_mutex_lock(&mutex);
-    robos_que_planejaram++;
-    pthread_mutex_unlock(&mutex);
+void sincroniza_planejamento_robos() {
+    pthread_mutex_lock(&mutex_robos_planejados);
+    robos_planejados++;
+    pthread_mutex_unlock(&mutex_robos_planejados);
+    
+    if (robos_planejados != num_robos - robos_zerados) {
+        sem_wait(&sem_iniciar_execucao_robos);
+        return;
+    } 
 
-    if (robos_que_planejaram == num_robos - robos_zerados) {
-        robos_que_planejaram = 0;
-        for (int i = 0; i < num_robos - robos_zerados; i++) {
-            sem_post(&sem_controla_planejamento_robos);
-        }
-        for (int i = 0; i < num_robos; i++) {
-            for (int j = i + 1; j < num_robos; j++) {
-                if (robos[i].move_i == robos[j].move_i && robos[i].move_j == robos[j].move_j) {
-                    if (robos[i].id < robos[j].id) {
-                        robos[j].move_i = robos[j].i;
-                        robos[j].move_j = robos[j].j;
-                    } else {
-                        robos[i].move_i = robos[i].i;
-                        robos[i].move_j = robos[i].j;
-                    }
+    robos_planejados = 0;
+    resolve_conflito_por_mesma_celula();
+    
+    for (int r = 0; r < num_robos - robos_zerados - 1; r++) sem_post(&sem_iniciar_execucao_robos);
+}
+
+void resolve_conflito_por_mesma_celula() {
+    for (int i = 0; i < num_robos; i++) {
+        for (int j = i + 1; j < num_robos; j++) {
+            if (robos[i].move_i == robos[j].move_i && robos[i].move_j == robos[j].move_j) {
+                if (robos[i].id < robos[j].id) {
+                    robos[j].move_i = robos[j].i;
+                    robos[j].move_j = robos[j].j;
+                } else {
+                    robos[i].move_i = robos[i].i;
+                    robos[i].move_j = robos[i].j;
                 }
             }
         }
-    }
-    sem_wait(&sem_controla_planejamento_robos);
-
-
-    // for (int i = 0; i< num_robos; i++) {
-    //     if (robo->id == robos[i].id) continue;
-    //     if (robo->move_i == robos[i].move_i && robo->move_j == robos[i].move_j) {
-    //         if (robo->id < robos[i].id) {
-    //             robos[i].move_i = robos[i].i;
-    //             robos[i].move_j = robos[i].j;
-    //         }
-    //     }
-    // }
-    // Etapa de execução
-    if (robo->energia > 0)
-    {
-        // Robô com energia realiza o movimento planejado
-        realiza_movimento(robo);
-    } else
-    {
-        // Robô sem energia tenta roubar energia
-        realiza_roubo_energia(robo);
     }
 }
 
@@ -416,6 +396,7 @@ void realiza_movimento(Robo *robo)
     if (robo->energia == 0)
         return;
 
+    // Se o movimento resultar na mesma posição, não realiza
     if (robo->move_i == robo->i && robo->move_j == robo->j) 
         return;
 
@@ -457,6 +438,12 @@ void realiza_movimento(Robo *robo)
 
         // Reduz a energia do robô após o movimento
         robo->energia--;
+
+        if (robo->energia == 0) {
+            pthread_mutex_lock(&mutex_robos_zerados);
+            robos_zerados++;
+            pthread_mutex_unlock(&mutex_robos_zerados);
+        } 
     }
 }
 
@@ -479,6 +466,10 @@ void realiza_roubo_energia(Robo *robot)
 
     // Reseta a intenção de roubo após o sucesso
     robot->id_roubo_energia = -1;
+
+    pthread_mutex_lock(&mutex_robos_zerados);
+    robos_zerados--;
+    pthread_mutex_unlock(&mutex_robos_zerados);
 }
 
 /* Função que verifica se a posição está dentro dos limites da arena */
@@ -547,4 +538,3 @@ void destroi_robos(Robo *robos, int num_robos)
     // Libera a memória do array de robôs
     free(robos);
 }
-
