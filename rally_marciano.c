@@ -80,6 +80,9 @@ int robos_que_jogaram;
 sem_t sem_controla_robos_zerados;
 int robos_zerados = 0;
 
+sem_t sem_controla_planejamento_robos;
+int robos_que_planejaram = 0;
+
 /* Declaração das funções auxiliares */
 void le_entrada();
 void imprime_estado();
@@ -104,6 +107,7 @@ int main()
     sem_init(&sem_robos, 0, 0);
     sem_init(&sem_robos_esperando, 0, 0);
     sem_init(&sem_controla_robos_zerados, 0, 0);
+    sem_init(&sem_controla_planejamento_robos, 0, 0);
     pthread_mutex_init(&mutex, NULL);
 
     /* Leitura da entrada e inicialização da arena e dos robôs */
@@ -149,6 +153,7 @@ int main()
     sem_destroy(&sem_robos);
     sem_destroy(&sem_robos_esperando);
     sem_destroy(&sem_controla_robos_zerados);
+    sem_destroy(&sem_controla_planejamento_robos);
     pthread_mutex_destroy(&mutex);
 
     return 0;
@@ -285,6 +290,41 @@ void processa_robo(Robo *robo)
         calcula_movimento(robo);
     }
 
+    pthread_mutex_lock(&mutex);
+    robos_que_planejaram++;
+    pthread_mutex_unlock(&mutex);
+
+    if (robos_que_planejaram == num_robos - robos_zerados) {
+        robos_que_planejaram = 0;
+        for (int i = 0; i < num_robos - robos_zerados; i++) {
+            sem_post(&sem_controla_planejamento_robos);
+        }
+        for (int i = 0; i < num_robos; i++) {
+            for (int j = i + 1; j < num_robos; j++) {
+                if (robos[i].move_i == robos[j].move_i && robos[i].move_j == robos[j].move_j) {
+                    if (robos[i].id < robos[j].id) {
+                        robos[j].move_i = robos[j].i;
+                        robos[j].move_j = robos[j].j;
+                    } else {
+                        robos[i].move_i = robos[i].i;
+                        robos[i].move_j = robos[i].j;
+                    }
+                }
+            }
+        }
+    }
+    sem_wait(&sem_controla_planejamento_robos);
+
+
+    // for (int i = 0; i< num_robos; i++) {
+    //     if (robo->id == robos[i].id) continue;
+    //     if (robo->move_i == robos[i].move_i && robo->move_j == robos[i].move_j) {
+    //         if (robo->id < robos[i].id) {
+    //             robos[i].move_i = robos[i].i;
+    //             robos[i].move_j = robos[i].j;
+    //         }
+    //     }
+    // }
     // Etapa de execução
     if (robo->energia > 0)
     {
@@ -374,6 +414,9 @@ void realiza_movimento(Robo *robo)
 {
     // Verifica se o robô ainda tem energia para se mover
     if (robo->energia == 0)
+        return;
+
+    if (robo->move_i == robo->i && robo->move_j == robo->j) 
         return;
 
     // Verifica se a posição para onde o robô deseja se mover é válida
