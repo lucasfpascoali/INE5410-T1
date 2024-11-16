@@ -71,6 +71,7 @@ int num_total_turnos;  // Número total de turnos da simulação
 int energia_bateria;  // Quantidade de energia fornecida por uma bateria
 
 sem_t sem_robos;
+sem_t sem_robos_esperando;
 sem_t sem_turno;
 pthread_mutex_t mutex;
 int robos_que_jogaram;
@@ -97,6 +98,8 @@ int main()
 {
     sem_init(&sem_turno, 0, 1);
     sem_init(&sem_robos, 0, 0);
+    sem_init(&sem_robos_esperando, 0, 0);
+    pthread_mutex_init(&mutex, NULL);
 
     /* Leitura da entrada e inicialização da arena e dos robôs */
     le_entrada();
@@ -112,7 +115,7 @@ int main()
     {
         sem_wait(&sem_turno);
         robos_que_jogaram = 0;
-        
+
         printf("Turno %d:\n", turno);
         imprime_estado();
 //        imprime_resultados();
@@ -137,6 +140,10 @@ int main()
     destroi_robos(robos, num_robos);
 
     /* Liberar memória de semáforos */
+    sem_destroy(&sem_turno);
+    sem_destroy(&sem_robos);
+    sem_destroy(&sem_robos_esperando);
+    pthread_mutex_destroy(&mutex);
 
     return 0;
 }
@@ -233,8 +240,13 @@ void* thread_routine(void* arg) {
         pthread_mutex_unlock(&mutex);
 
         if (robos_que_jogaram == num_robos) {
-            sem_post(&sem_turno);
+            for (int r = 0; r < num_robos; r++) {
+                sem_post(&sem_robos_esperando);
+            }
+            sem_post(&sem_turno); 
         }
+        sem_wait(&sem_robos_esperando);
+        
     }
     pthread_exit(NULL);
 }
