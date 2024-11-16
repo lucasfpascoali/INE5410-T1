@@ -69,9 +69,11 @@ Robo *robos;  // Array contendo todos os robôs da simulação
 int num_robos;  // Número total de robôs
 int num_total_turnos;  // Número total de turnos da simulação
 int energia_bateria;  // Quantidade de energia fornecida por uma bateria
-int robos_planejando;
-sem_t sem_robos_planejando;
-sem_t sem_executa;
+
+sem_t sem_robos;
+sem_t sem_turno;
+pthread_mutex_t mutex;
+int robos_que_jogaram;
 
 /* Declaração das funções auxiliares */
 void le_entrada();
@@ -93,33 +95,37 @@ void destroi_robos(Robo *robos, int num_robos);
 
 int main()
 {
-    sem_init(&sem_robos_planejando, 0, 1);
-    sem_init(&sem_executa, 0, 0);
+    sem_init(&sem_turno, 0, 1);
+    sem_init(&sem_robos, 0, 0);
 
     /* Leitura da entrada e inicialização da arena e dos robôs */
     le_entrada();
     
+    pthread_t *threads = (pthread_t *)malloc(sizeof(pthread_t)*num_robos);
+    /* Processa cada robô */
+    for (int r = 0; r < num_robos; r++)
+    {
+        pthread_create(&threads[r], NULL, thread_routine, &robos[r]);
+    }
 
-    /* Simulação dos turnos. O turno 0 é o estado inicial. */
     for (int turno = 0; turno < num_total_turnos; turno++)
     {
-        pthread_t *threads = (pthread_t *)malloc(sizeof(pthread_t)*num_robos);
-
+        sem_wait(&sem_turno);
+        robos_que_jogaram = 0;
+        
         printf("Turno %d:\n", turno);
         imprime_estado();
 //        imprime_resultados();
-        
-        /* Processa cada robô */
-        for (int r = 0; r < num_robos; r++)
-        {
-            pthread_create(&threads[r], NULL, thread_routine, &robos[r]);
+        for (int r = 0; r < num_robos; r++) {
+            sem_post(&sem_robos); // libera robos
         }
-        for (int r = 0; r < num_robos; r++)
-        {
-            pthread_join(threads[r], NULL);
-        }
-        free(threads);
     }
+
+    for (int r = 0; r < num_robos; r++)
+    {
+        pthread_join(threads[r], NULL);
+    }
+    free(threads);
 
     /* Imprime os resultados da simulação */
     printf("Turno %d:\n", num_total_turnos);
@@ -129,6 +135,8 @@ int main()
     /* Liberação de memória alocada */
     destroi_arena(&arena);
     destroi_robos(robos, num_robos);
+
+    /* Liberar memória de semáforos */
 
     return 0;
 }
@@ -215,13 +223,21 @@ void imprime_estado()
 
 void* thread_routine(void* arg) {
     Robo *robo = (Robo *)arg;
-    processa_robo(robo);
+    for (int turno = 0; turno < num_total_turnos; turno++)
+    {
+        sem_wait(&sem_robos);
+        processa_robo(robo);
+
+        pthread_mutex_lock(&mutex);
+        robos_que_jogaram++;
+        pthread_mutex_unlock(&mutex);
+
+        if (robos_que_jogaram == num_robos) {
+            sem_post(&sem_turno);
+        }
+    }
     pthread_exit(NULL);
 }
-
-// void fim_de_turno() {
-//     sem_
-// }
 
 /* Função que controla o processamento de cada robô */
 void processa_robo(Robo *robo)
@@ -237,17 +253,6 @@ void processa_robo(Robo *robo)
         // Robô com energia planeja o próximo movimento
         calcula_movimento(robo);
     }
-
-    sem_wait(&sem_robos_planejando);
-    robos_planejando++;
-    sem_post(&sem_robos_planejando);
-    if (robos_planejando == num_robos) {
-        for (int i = 0; i < num_robos; i++) {
-            sem_post(&sem_executa);
-        }
-        robos_planejando = 0;
-    }
-    sem_wait(&sem_executa);
 
     // Etapa de execução
     if (robo->energia > 0)
