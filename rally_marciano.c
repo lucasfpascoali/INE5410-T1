@@ -86,8 +86,6 @@ pthread_mutex_t mutex_num_robos_movimentar;
 int num_robos_movimentar = 0;
 
 /* Declaração das funções auxiliares */
-void inicializacao_globais();
-void destruicao_globais();
 void sincroniza_proximo_turno();
 void sincroniza_execucao_movimento();
 void resolve_conflito_celulas();
@@ -106,6 +104,9 @@ void imprime_resultados();
 void cria_arena(Arena *a, int linhas, int colunas);
 void destroi_arena(Arena *arena);
 void destroi_robos(Robo *robos, int num_robos);
+void inicializacao_globais();
+void destruicao_globais();
+
 
 int main()
 {
@@ -217,8 +218,9 @@ void sincroniza_execucao_movimento() {
 
     // Último robô a planejar seu movimento
     resolve_conflito_celulas();
+
     num_robos_movimentar = 0; // Reinicia número de robôs a movimentar.
-    for (int i = 0; i < num_robos - num_robos_zerados - 1; i++) sem_post(&sem_iniciar_movimento_robos); // Libera robôs executarem seus movie=mentos.
+    for (int i = 0; i < num_robos - num_robos_zerados - 1; i++) sem_post(&sem_iniciar_movimento_robos); // Libera robôs executarem seus movimentos.
 }
 
 void resolve_conflito_celulas() {
@@ -343,7 +345,7 @@ void processa_robo(Robo *robo)
     
     calcula_movimento(robo); // Etapa de planejamento: Robô com energia planeja o próximo movimento.
 
-    sincroniza_execucao_movimento();
+    sincroniza_execucao_movimento(); // Garante que todos os robôs com energia tenham planejado seu movimento.
 
     realiza_movimento(robo); // Etapa de execução: Robô com energia realiza o movimento planejado.
 }
@@ -418,6 +420,12 @@ void calcula_movimento(Robo *robo)
         default:
             break;  // Direção inválida, o robô permanece na mesma posição
     }
+
+    // Se posição futura é inválida, não modifica
+    if (!eh_posicao_valida(robo->move_i, robo->move_j)) {
+        robo->move_i = robo->i;
+        robo->move_j = robo->j;
+    }
 }
 
 /* Função para realizar o movimento do robô */
@@ -439,8 +447,12 @@ void realiza_movimento(Robo *robo)
     CelulaArena *nova_cel = &arena.cel[robo->move_i][robo->move_j];
     CelulaArena *cel = &arena.cel[robo->i][robo->j];
 
+    // Se há outro robô na posição futura do robô dessa thread que não irá se mover, o robô dessa thread não anda
+    if (nova_cel->id >= 0 && robos[nova_cel->id].move_i == robos[nova_cel->id].i && robos[nova_cel->id].move_j == robos[nova_cel->id].j)   
+        return;
+
     // Verifica se a célula de destino está vazia e não é um obstáculo (pilar)
-    if (nova_cel->obj != PILAR && nova_cel->id < 0)
+    if (nova_cel->obj != PILAR)
     {
         // Coleta o objeto presente na célula de destino (se houver)
         switch (nova_cel->obj)
@@ -452,7 +464,7 @@ void realiza_movimento(Robo *robo)
                 robo->figuras_coletadas++;  // Coleta a figura
                 break;
         }
-
+    //
         // Limpa o objeto da célula de destino após coleta
         nova_cel->obj = VAZIO;
 
