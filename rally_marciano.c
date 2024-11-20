@@ -185,16 +185,19 @@ void calcula_robos_zerados() {
 
 /* Função que sincroniza robôs no fim do turno (todos devem ter concluído seu lance) */
 void sincroniza_proximo_turno() {
+    int priv_num_robos_jogaram; // Privando variável global para usar nas verificações posteriores.
+
     // Contador de robôs que jogam no turno.
     pthread_mutex_lock(&mutex_num_robos_jogaram);
     num_robos_jogaram++;
+    priv_num_robos_jogaram = num_robos_jogaram;
     pthread_mutex_unlock(&mutex_num_robos_jogaram);
 
     // Último robô com energia a jogar, libera robôs zerados para jogarem.
-    if (num_robos_jogaram == num_robos - num_robos_zerados) for (int i = 0 ; i < num_robos_zerados; i++) sem_post(&sem_iniciar_jogada_robo_zerado);
+    if (priv_num_robos_jogaram == num_robos - num_robos_zerados) for (int i = 0 ; i < num_robos_zerados; i++) sem_post(&sem_iniciar_jogada_robo_zerado);
 
     // Faltam robôs para jogarem
-    if (num_robos_jogaram != num_robos) {
+    if (priv_num_robos_jogaram != num_robos) {
         sem_wait(&sem_proxima_jogada_robo);
         return;
     }
